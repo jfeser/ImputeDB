@@ -1,18 +1,21 @@
 #!/usr/bin/env python
 
 from __future__ import print_function
-from generate_big_joins import create_join_workload
+
 import os
 import subprocess
 import tempfile
 
-executable_default    = ["java","-Xmx3200m","-jar","../../dist/simpledb.jar"]
-executable_longimpute = ["java","-Xmx3200m","-Dsimpledb.ImputeSlow","-jar","../../dist/simpledb.jar"]
-output_dir            = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
-catalog_default       = "../../catalog.txt"
-queries_default       = "queries.txt"
+from generate_big_joins import create_join_workload
 
-def run_large05_experiment():
+script_dir            = os.path.dirname(os.path.realpath(__file__))
+output_dir            = os.path.join(script_dir, "output")
+executable_default    = "java -Xmx3200m -jar ../simpledb/dist/simpledb.jar".split(" ")
+executable_longimpute = "java -Xmx3200m -Dsimpledb.ImputeSlow -jar ../simpledb/dist/simpledb.jar".split(" ")
+catalog_default       = "../simpledb/catalog.txt"
+queries_default       = "./queries.txt"
+
+def run_experiment_aggregates():
 
     iters     = 220
     min_alpha = 0.00
@@ -22,21 +25,21 @@ def run_large05_experiment():
     queries = queries_default
 
     this_output_dir = os.path.join(output_dir, "regression_tree")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "REGRESSION_TREE")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="REGRESSION_TREE")
 
     this_output_dir = os.path.join(output_dir, "mean")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "MEAN")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="MEAN")
 
     this_output_dir = os.path.join(output_dir, "hot_deck")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "HOTDECK")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="HOTDECK")
 
-def run_large05_experiment_count():
+def run_experiment_count():
 
     iters     = 220
     min_alpha = 0.00
@@ -46,36 +49,37 @@ def run_large05_experiment_count():
     queries = "queries_count.txt"
 
     this_output_dir = os.path.join(output_dir, "regression_tree")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "REGRESSION_TREE")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="REGRESSION_TREE")
 
     this_output_dir = os.path.join(output_dir, "mean")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "MEAN")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="MEAN")
 
     this_output_dir = os.path.join(output_dir, "hot_deck")
-    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step, queries =
-            queries, executable = executable_longimpute, imputationMethod =
-            "HOTDECK")
+    run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
+                   queries=queries, executable=executable_longimpute,
+                   imputationMethod="HOTDECK")
 
-def run_acs_experiment():
+def run_experiment_acs():
     catalog = catalog_default
-    executable = executable_default
+    executable = executable_longimpute
 
     this_output_dir = os.path.join(output_dir, "acs")
 
-    # Impute on base table
+
+    # Write acs query to temporary file
     (f, acs_query) = tempfile.mkstemp()
     os.write(f, "SELECT AVG(c0) FROM acs_dirty;\n")
 
+    # Impute on base table
     iters = 1
 
     print("Running acs base...")
-    executable_max_heap = [executable[0]] + ["-Xmx3200m", "-Dsimpledb.ImputeSlow"] + executable[1:]
-    cmd = executable_max_heap + \
-        ["experiment", catalog, acs_query, this_output_dir, str(iters), "--base"]
+    cmd = (executable + ["experiment", catalog, acs_query, this_output_dir,
+                         str(iters), "--base"])
     print(cmd)
     subprocess.call(cmd)
     print("Running acs base...done.")
@@ -86,13 +90,14 @@ def run_acs_experiment():
     max_alpha = 1.00
     step      = 1.00
 
-    subprocess.call(executable +
-        ["experiment", catalog, acs_query, this_output_dir,
-         str(iters), str(min_alpha), str(max_alpha), str(step)])
+    cmd = (executable + ["experiment", catalog, acs_query, this_output_dir,
+                         str(iters), str(min_alpha), str(max_alpha),
+                         str(step)])
+    subprocess.call(cmd)
 
     os.close(f)
 
-def run_join_experiments():
+def run_experiment_joins():
     join_output_dir = os.path.join(output_dir, "joins")
 
     iters     = 20
@@ -124,7 +129,8 @@ def run_join_experiments():
 
 
 def run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
-        queries=None, executable=None, plan_only=False, imputationMethod=""):
+                   queries=None, executable=None, plan_only=False,
+                   imputationMethod=""):
     if not os.path.isdir(this_output_dir):
         os.makedirs(this_output_dir)
 
@@ -159,9 +165,8 @@ def run_experiment(this_output_dir, iters, min_alpha, max_alpha, step,
 if __name__ == "__main__":
     import fire
     fire.Fire({
-        "large05" : run_large05_experiment,
-        "large05_count" : run_large05_experiment_count,
-        "acs" : run_acs_experiment,
-        "joins" : run_join_experiments,
+        "experiment-aggregates" : run_experiment_aggregates,
+        "experiment-count" : run_experiment_count,
+        "experiment-acs" : run_experiment_acs,
+        "experiment-joins" : run_experiment_joins,
     })
-    print("Done.")

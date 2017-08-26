@@ -1,22 +1,20 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from __future__ import print_function
 
-import pandas as pd
-import numpy as np
-
-import os
+from collections import defaultdict
 import glob
+from io import StringIO
+import os
 import sys
 
-import fire
-
-from collections import defaultdict
-
+import numpy as np
+import pandas as pd
 try:
-    from StringIO import StringIO
+    from tqdm import tqdm
 except ImportError:
-    from io import StringIO
+    tqdm = lambda x: x
+from six import iteritems
 
 # configure this
 nqueries = 9
@@ -47,28 +45,34 @@ def get_query_results(experiments_dir, headers, restrict_alpha=False, base=False
     # results has
     # - key: (query, alpha)
     # - value: df with results, col names specific to that query
-    results = defaultdict(lambda: [])
+    results = defaultdict(list)
 
     # Impute on base stored in base/ subdirectory, buth with same subdirectory
     # structure.
     if base:
-        experiments_dir = os.path.join(experiments_dir, "base")
+        experiments_dir = os.path.join(experiments_dir, 'base')
 
     # Iterate through queries, alpha, iters
-    print("get_query_results")
     if restrict_alpha:
-        globs = glob.glob(experiments_dir + os.path.sep + "q*/alpha000/it*/result.txt") + \
-             glob.glob(experiments_dir + os.path.sep + "q*/alpha1000/it*/result.txt")
+        globs = (glob.glob(experiments_dir + os.path.sep + 'q*/alpha000/it*/result.txt') + 
+                 glob.glob(experiments_dir + os.path.sep + 'q*/alpha1000/it*/result.txt'))
     else:
-        globs = glob.glob(experiments_dir + os.path.sep + "q*/alpha*/it*/result.txt")
+        globs = glob.glob(experiments_dir + os.path.sep + 'q*/alpha*/it*/result.txt')
 
-    for f in globs:
-        print("Reading {}...".format(f))
-        qi = f.rfind("/q")+len("/q")
+    def parse_query_from_filename(filename):
+        qi = f.rfind('/q')+len('/q')
         q = int(f[qi:qi+2])
-        ai = f.rfind("/alpha") + len("/alpha")
-        aj = f.find("/", ai)
+        return q
+
+    def parse_alpha_from_filename(filename):
+        ai = f.rfind('/alpha') + len('/alpha')
+        aj = f.find('/', ai)
         alpha = int(f[ai:aj])/1000.0
+        return alpha
+
+    for f in tqdm(globs):
+        q = parse_query_from_filename(f)
+        alpha = parse_alpha_from_filename(f)
         df = pd.read_csv(f, header=None, names=headers[q])
         if len(df.columns) > 1:
             df = df.set_index(df.columns[0])
@@ -99,31 +103,32 @@ def get_smape(refs, results):
     return np.nanmean(metrics), np.nanstd(metrics)
 
 def get_timing_results(experiments_dir, restrict_alpha=False, base=False, joins=False):
-    assert(not (joins and base))
-    columns=["query","alpha","iter","plan_time","run_time","plan_hash"]
+    if joins and base:
+        raise ValueError("Specify only one of 'joins' and 'base'.")
+
+    columns=['query', 'alpha', 'iter', 'plan_time', 'run_time', 'plan_hash']
     if joins:
-      columns.append("njoins")
+      columns.append('njoins')
 
     df = pd.DataFrame(columns=columns)
 
     # Impute on base stored in base/ subdirectory, buth with same subdirectory
     # structure.
     if base:
-        experiments_dir = os.path.join(experiments_dir, "base")
+        experiments_dir = os.path.join(experiments_dir, 'base')
 
     if joins:
         # wildcard for number of tables used in join
-        experiments_dir = os.path.join(experiments_dir, "*")
+        experiments_dir = os.path.join(experiments_dir, '*')
 
     if restrict_alpha:
-        globs = glob.glob(experiments_dir + os.path.sep + "q*/alpha000/timing.csv") + \
-             glob.glob(experiments_dir + os.path.sep + "q*/alpha1000/timing.csv")
+        globs = (glob.glob(experiments_dir + os.path.sep + 'q*/alpha000/timing.csv') + 
+                 glob.glob(experiments_dir + os.path.sep + 'q*/alpha1000/timing.csv'))
     else:
-        globs = glob.glob(experiments_dir + os.path.sep + "q*/alpha*/timing.csv")
+        globs = glob.glob(experiments_dir + os.path.sep + 'q*/alpha*/timing.csv')
 
     # Iterate through queries, alpha, reading 'timing.csv' for each.
-    for f in globs:
-        print('Processing {}...'.format(f))
+    for f in tqdm(globs):
         df0 = pd.read_csv(f)
         if joins:
           # get number of joins
@@ -200,20 +205,17 @@ def write_perf_summary(experiments_dir, output_dir):
     experiment_results = get_query_results(experiments_dir, table_headers)
     base_results = get_query_results(experiments_dir, table_headers, base=True)
     perf = []
-    try:
-        experiment_results_items = experiment_results.iteritems()
-        base_results_items       = base_results.iteritems()
-    except AttributeError:
-        experiment_results_items = experiment_results.items()
-        base_results_items       = base_results.items()
-    for (query, alpha), res in experiment_results_items:
-        print("Processing query {}, alpha {}...".format(query, alpha))
-        refs = [df for (q, a), dfs in base_results_items for df in dfs if q == query]
+    experiment_results_items = iteritems(experiment_results)
+    base_results_items       = iteritems(base_results)
+    for (query, alpha), res in tqdm(experiment_results_items):
+        refs = [df for (q, a), dfs in base_results_items
+                   for df in dfs if q == query]
         smape, std = get_smape(refs, res)
         perf.append((query, alpha, smape, std))
 
-    perf_summary = pd.DataFrame(perf, columns = ['query', 'alpha', 'smape', 'std'])
-    perf_summary = perf_summary.sort_values(['query', 'alpha'])
+    perf_summary = (pd.DataFrame(perf,
+                                 columns=['query', 'alpha', 'smape', 'std'])
+                    .sort_values(['query', 'alpha']))
     perf_summary_latex = perf_summary.copy()[['query', 'alpha', 'smape']]
     perf_summary_latex['smape'] *= 100.0
     perf_summary_latex.columns = ['Query', r'\alpha', 'SMAPE']
@@ -222,31 +224,39 @@ def write_perf_summary(experiments_dir, output_dir):
 
     return perf
 
-def analyze_join_planning(experiment_dir, output_dir=""):
+def analyze_join_planning(experiment_dir, output_dir=''):
     if not output_dir:
-        output_dir = os.path.join(experiment_dir, "analysis")
+        output_dir = os.path.join(experiment_dir, 'analysis')
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
+
     # time data
     data = get_timing_results(experiment_dir, joins=True)
     # drop warmup iterations
     data = drop_warmup(data, ['njoins', 'query', 'alpha'], drop=10)
     # average planning time and se by number of joins
-    # alpha doesn't have a real impact on the planning time (as we would expect), so don't aggregate with it
-    planning_summary = data.groupby('njoins')['plan_time'].agg({'mean': np.mean, 'std': np.std}).reset_index()
+    # alpha doesn't have a real impact on the planning time (as we would
+    # expect), so don't aggregate with it
+    planning_summary = (data.groupby('njoins')
+                            ['plan_time']
+                            .agg({'mean': np.mean, 'std': np.std})
+                            .reset_index())
     planning_summary_latex = planning_summary.copy()
     planning_summary_latex = planning_summary_latex[['njoins', 'mean', 'std']]
-    planning_summary_latex = planning_summary_latex.rename(columns={'njoins': '# of Joins', 'mean': 'Avg (ms)', 'std': 'SE'})
-    planning_summary_latex.to_latex(os.path.join(output_dir, 'plan_summary.tex'), index=False, float_format='%.2f')
+    planning_summary_latex = planning_summary_latex.rename(
+        columns={ 'njoins': '# of Joins', 'mean': 'Avg (ms)', 'std': 'SE'})
+    planning_summary_latex.to_latex(
+        os.path.join(output_dir, 'plan_summary.tex'), index=False,
+        float_format='%.2f')
 
 
-def write_counts_summary(experiments_dir, output_dir=""):
+def write_counts_summary(experiments_dir, output_dir=''):
     if not os.path.isdir(experiments_dir):
         raise FileNotFoundError
 
     if not output_dir:
-        output_dir = os.path.join(experiments_dir, "analysis")
+        output_dir = os.path.join(experiments_dir, 'analysis')
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
@@ -255,13 +265,8 @@ def write_counts_summary(experiments_dir, output_dir=""):
     base_results = get_query_results(experiments_dir, table_headers, base=True)
 
     def compute_average_count_items(d):
-        try:
-            myitems = d.iteritems()
-        except AttributeError:
-            myitems = d.items()
-
-        df = pd.DataFrame(columns=["query","alpha","mean","std"])
-        for (query, alpha), res in myitems:
+        records = []
+        for (query, alpha), res in iteritems(d):
             sums = []
             for df1 in res:
                 s = df1.sum()
@@ -272,54 +277,59 @@ def write_counts_summary(experiments_dir, output_dir=""):
                 sums.append(s.values[0])
             avg = np.mean(sums)
             std = np.std(sums)
-            df = df.append(pd.DataFrame(
-                data={"query": [query],
-                      "alpha": [alpha],
-                      "mean": [avg],
-                      "std": [std],
-                }))
+            records.append({
+                'query': query,
+                'alpha': alpha,
+                'mean': avg,
+                'std': std,
+            })
+        df = pd.DataFrame.from_records(records)
+        df.columns = ['query', 'alpha', 'mean', 'std']  # reorder
 
         return df
 
     df1 = compute_average_count_items(experiment_results)
     df2 = compute_average_count_items(base_results)
 
-    df2["alpha"] = -1.0 # impute at base table
+    df2['alpha'] = -1.0 # impute at base table
 
     # Write to file
-    df = df1.append(df2).sort_values(["query"])
+    df = df1.append(df2).sort_values(['query'])
 
-    print("Writing means...", end='')
-    dfmean = df.pivot(index="query",columns="alpha",values="mean") 
+    print('Writing means...', end='')
+    dfmean = df.pivot(index='query',columns='alpha',values='mean') 
     dfmean.to_latex(os.path.join(output_dir, 'counts_mean.tex'),
-            float_format='%.2f')
-    print("done")
+                    float_format='%.2f')
+    print('done')
 
-    print("Writing stds...", end='')
-    dfstd = df.pivot(index="query",columns="alpha",values="std")
-    dfstd.to_latex(os.path.join(output_dir, 'counts_std.tex'),
-            float_format='%.2f')
-    print("done")
-
-    dfmean["0.0 pct"] = dfmean[0.0]/dfmean[-1.0]
-    dfmean["1.0 pct"] = dfmean[1.0]/dfmean[-1.0]
-
-    print("Writing means (pct)...", end='')
-    dfmean[["0.0 pct","1.0 pct"]].to_latex(
-        os.path.join(output_dir, 'counts_mean_pct.tex'), float_format='%.2f'
+    print('Writing stds...', end='')
+    (df.pivot(index='query',columns='alpha',values='std')
+       .to_latex(os.path.join(output_dir, 'counts_std.tex'),
+                 float_format='%.2f')
     )
-    print("done")
+    print('done')
 
-def main(experiments_dir, output_dir=""):
+    print('Writing means (pct)...', end='')
+    dfmean['0.0 pct'] = dfmean[0.0]/dfmean[-1.0]
+    dfmean['1.0 pct'] = dfmean[1.0]/dfmean[-1.0]
+    dfmean[['0.0 pct','1.0 pct']].to_latex(
+        os.path.join(output_dir, 'counts_mean_pct.tex'),
+        float_format='%.2f'
+    )
+    print('done')
+
+def main(experiments_dir, output_dir=''):
     if not output_dir:
-        output_dir = os.path.join(experiment_dir, "analysis")
+        output_dir = os.path.join(experiments_dir, 'analysis')
     collapse_results(experiments_dir, output_dir)
     collapse_results(experiments_dir, output_dir, base=True)
     write_perf_summary(experiments_dir, output_dir)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    import fire
     fire.Fire({
-        "analyze" : main,
-        "analyze-joins" : analyze_join_planning,
-        "analyze-counts" : write_counts_summary,
+        'analyze' : main,
+        'analyze-joins' : analyze_join_planning,
+        'analyze-counts' : write_counts_summary,
     })
+
